@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>云枢 (YunShu) — Arch Linux 安装指引</title>
+<style>
+  :root { --fg:#1f2328; --muted:#656d76; --bg:#fff; --code-bg:#f6f8fa; --border:#d1d9e0; --accent:#0969da; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg:#e6edf3; --muted:#8d96a0; --bg:#0d1117; --code-bg:#161b22; --border:#30363d; --accent:#4493f8; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:2rem 1.25rem; background:var(--bg); color:var(--fg);
+         font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC",Helvetica,Arial,sans-serif; }
+  main { max-width: 46rem; margin: 0 auto; }
+  h1 { font-size:1.75rem; margin:0 0 .35rem; letter-spacing:-.01em; }
+  .sub { color:var(--muted); margin:0 0 2rem; font-size:.9375rem; }
+  h2 { font-size:1.15rem; margin:2.25rem 0 .75rem; padding-bottom:.35rem; border-bottom:1px solid var(--border); }
+  p { margin:.65rem 0; }
+  pre { background:var(--code-bg); border:1px solid var(--border); border-radius:6px;
+        padding:.85rem 1rem; overflow-x:auto; margin:.75rem 0; font-size:.875rem; line-height:1.55; }
+  code { font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+         font-size:.875em; background:var(--code-bg); padding:.15em .35em; border-radius:4px; }
+  pre code { background:none; padding:0; font-size:1em; }
+  .note { border-left:3px solid var(--accent); background:var(--code-bg); padding:.7rem 1rem;
+          border-radius:0 6px 6px 0; margin:1rem 0; font-size:.9375rem; }
+  .warn { border-left-color:#d29922; }
+  a { color:var(--accent); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  table { border-collapse:collapse; width:100%; margin:.85rem 0; font-size:.9375rem; }
+  th,td { border:1px solid var(--border); padding:.45rem .7rem; text-align:left; }
+  th { background:var(--code-bg); font-weight:600; }
+  footer { margin-top:3rem; padding-top:1.25rem; border-top:1px solid var(--border);
+           color:var(--muted); font-size:.875rem; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>云枢 (YunShu) for Arch Linux</h1>
+<p class="sub">社区维护的 pacman 仓库 · 非厂商官方发行版</p>
+
+<div class="note warn">
+<strong>与官方安装包的重要差异</strong><br>
+本包<strong>不含</strong> DLP 数据防泄漏、截图审计、厂商自更新器与内核级 hook。
+如果你的公司要求通过云枢接受合规审计，本包<b>无法满足</b>，请使用厂商官方安装包。
+</div>
+
+<h2>安装</h2>
+
+<p>在 <code>/etc/pacman.conf</code> 末尾加入：</p>
+
+<pre><code>[yunshu]
+Server = https://github.com/Drivpe/yunshu-arch/releases/latest/download
+SigLevel = Optional TrustAll</code></pre>
+
+<div class="note warn">
+<strong>关于 <code>SigLevel</code></strong><br>
+本仓库未做 GPG 签名，所以必须加这一行，否则 pacman 会因「缺少签名」拒绝安装。
+<code>TrustAll</code> 表示信任此仓库的全部内容 —— 由于包是本仓库从厂商 CDN 拉取并原样重建的，
+且你在安装前可自行核对 <code>sha256</code>，这个取舍在本场景下是合理的。
+若你不接受放宽签名策略，请改用下方的「自行构建」方式。
+</div>
+
+<p>然后安装：</p>
+
+<pre><code>sudo pacman -Sy
+sudo pacman -S yunshu</code></pre>
+
+<div class="note">
+如果提示 <code>包未找到</code>，先确认 <code>pacman -Sy</code> 没有报错。
+数据库文件在同一个 Release 中，与包一起更新。
+</div>
+
+<h2>或者：自行构建</h2>
+
+<p>不想放宽签名策略的话，直接拿 PKGBUILD 自己构建（需要 <code>base-devel</code>）：</p>
+
+<pre><code>git clone https://github.com/Drivpe/yunshu-arch.git
+cd yunshu-arch
+makepkg -si</code></pre>
+
+<p>这样包由你本机构建，不经过任何第三方签名校验。</p>
+
+<h2>安装后</h2>
+
+<p>安装过程中会询问是否启用后台服务，回车即启用。若当时跳过了：</p>
+
+<pre><code>sudo systemctl enable --now yunshu-daemon</code></pre>
+
+<p>启动图形界面：</p>
+
+<pre><code>yunshu</code></pre>
+
+<p>或从应用菜单搜索「云枢 / YunShu」。</p>
+
+<p><strong>首次登录需填写「企业标识」</strong>，请向你的企业 IT 管理员索取。</p>
+
+<h2>卸载</h2>
+
+<pre><code>sudo pacman -Rns yunshu</code></pre>
+
+<p>会清理程序文件、系统集成项，以及 <code>/opt/apps/yunshu</code> 下含登录凭证的
+<code>config.db</code> 与策略缓存。</p>
+
+<p>以下目录<strong>保留</strong>（遵循 Arch「包不碰家目录」惯例）：</p>
+
+<pre><code>~/.config/YunshuCross/</code></pre>
+
+<p>该目录含 Cookies 与登录态。要连同凭证彻底清除：</p>
+
+<pre><code>rm -rf ~/.config/YunshuCross</code></pre>
+
+<h2>本包做了什么</h2>
+
+<table>
+<tr><th>项目</th><th>原厂 deb</th><th>本包</th></tr>
+<tr><td>VPN 隧道 + 认证</td><td>✅</td><td>✅</td></tr>
+<tr><td>DLP 数据防泄漏</td><td>✅</td><td>❌ 已移除</td></tr>
+<tr><td>截图审计服务</td><td>✅</td><td>❌ 已移除</td></tr>
+<tr><td>厂商自更新器</td><td>✅</td><td>❌ 已移除（走 pacman）</td></tr>
+<tr><td>setuid 二进制</td><td>✅</td><td>❌ 无</td></tr>
+<tr><td>安装体积</td><td>约 546 MB</td><td>约 300 MB</td></tr>
+</table>
+
+<p>移除 <code>files/plugin/</code>（约 237 MB 的 DLP 与杀毒组件）不影响 VPN 与认证，
+核心程序经 <code>ldd</code> 验证不依赖其中任何库。</p>
+
+<h2>常见问题</h2>
+
+<p><strong>沙箱启动失败？</strong><br>
+本包不给 <code>chrome-sandbox</code> 设 setuid，改用内核的 unprivileged userns。
+若你的系统禁用了它（<code>kernel.unprivileged_userns_clone=0</code>），
+可复制一份 desktop 文件到 <code>~/.local/share/applications/</code>，
+在 <code>Exec=</code> 末尾加 <code> --no-sandbox</code>。</p>
+
+<p><strong>版本落后？</strong><br>
+厂商没有公开的 Linux 下载页，版本探测依赖其公开接口，可能滞后。
+发现新版请在本仓库开 issue。</p>
+
+<footer>
+本软件为闭源商业软件，版权归杭州亿格云科技（EagleCloud）所有。<br>
+本仓库仅提供打包配方与构建产物索引，不主张对软件本身的任何权利。<br>
+使用前请自行确认你所在组织允许在 Arch 上以本方式使用该客户端。
+</footer>
+
+</main>
+</body>
+</html>

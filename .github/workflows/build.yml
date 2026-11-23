@@ -1,0 +1,182 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+    paths: ['PKGBUILD']
+  schedule:
+    # 每天 03:17 UTC 检查上游是否有新版
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '强制指定版本号（留空则自动探测）'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
+    steps:
+      - name: 安装依赖
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git bsdtar jq openssh
+
+      - name: 检出代码
+        run: |
+          pacman -S --noconfirm --needed git
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+      - uses: actions/checkout@v4
+
+      - name: 确定版本
+        id: ver
+        env:
+          PUBLIC_TOKEN: ${{ vars.YUNSHU_PUBLIC_TOKEN || 'LtupUtmVFiEJ' }}
+          FORCED: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "${FORCED:-}" ]; then
+            V="$FORCED"; echo "手动指定: $V"
+          else
+            V=$(curl -sSf --max-time 30 \
+              "https://brizoo.eagleyun.com/anonApi/v1/spa/download/app/versions?token=${PUBLIC_TOKEN}&lang=zh-cn" \
+              | jq -r '.data.electron_downloads[]
+                       | select(.platform=="linux" and .os_release=="ubuntu" and .arch=="x86_64")
+                       | .version' | sort -V | tail -1)
+          fi
+          [ -n "$V" ] && [ "$V" != "null" ] || { echo "::error::无法确定版本"; exit 1; }
+          CUR=$(grep -oP '^pkgver=\K.*' PKGBUILD)
+          echo "version=$V"   >> "$GITHUB_OUTPUT"
+          echo "current=$CUR" >> "$GITHUB_OUTPUT"
+          if [ "$CUR" = "$V" ]; then echo "changed=false" >> "$GITHUB_OUTPUT"
+          else echo "changed=true"; echo "changed=true" >> "$GITHUB_OUTPUT"; fi
+          echo "当前 $CUR / 上游 $V"
+
+      - name: 同步 PKGBUILD 到新版本
+        if: steps.ver.outputs.changed == 'true'
+        env:
+          V: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          URL="https://pkg-cdn-hz0.sase.eagleyun.com/app/linux/${V}/ubuntu/x86_64/eaglecloud_yunshu_${V}_amd64.deb"
+          CODE=$(curl -sSL -o /dev/null -w '%{http_code}' --max-time 60 -I "$URL")
+          [ "$CODE" = "200" ] || { echo "::error::CDN 无该版本 ($CODE)"; exit 1; }
+
+          curl -sSL --max-time 600 "$URL" -o /tmp/pkg.deb
+          SHA=$(sha256sum /tmp/pkg.deb | awk '{print $1}')
+          echo "sha256=$SHA"
+
+          sed -i "s/^pkgver=.*/pkgver=${V}/"     PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/"        PKGBUILD
+          sed -i "s/^sha256sums=.*/sha256sums=('${SHA}')/" PKGBUILD
+          # 把 deb 放到 srcdir，免得 makepkg 再下一次
+          cp /tmp/pkg.deb "eaglecloud_yunshu_${V}_amd64.deb"
+
+      - name: 构建
+        run: |
+          set -euo pipefail
+          useradd -m builder || true
+          chown -R builder:builder .
+          su builder -c 'makepkg -f --nodeps --noconfirm'
+          ls -lh ./*.pkg.tar.zst
+
+      - name: 校验包内容
+        run: |
+          set -euo pipefail
+          PKG=$(ls -1 ./*.pkg.tar.zst | head -1)
+          echo "包: $PKG"
+
+          fail=0
+          chk() { if [ "$2" = "0" ]; then echo "PASS $1"; else echo "FAIL $1 (实际 $2)"; fail=1; fi; }
+
+          chk "plugin 已移除"   "$(bsdtar -tf "$PKG" | grep -c 'files/plugin')"
+          chk "config.db 未打包" "$(bsdtar -tf "$PKG" | grep -c 'config.db')"
+          chk "screenshot 已移除" "$(bsdtar -tf "$PKG" | grep -ci screenshot)"
+
+          # 必须有可执行位，否则 systemd 报 203/EXEC
+          bsdtar -tvf "$PKG" | grep 'bin/yunshu-daemon' | grep -q '^-rwx' && echo "PASS daemon 可执行" || { echo "FAIL daemon 无可执行位"; fail=1; }
+          bsdtar -tvf "$PKG" | grep 'bin/yunshu-updater' | grep -q '^-rwx' && echo "PASS updater 可执行" || { echo "FAIL updater 无可执行位"; fail=1; }
+
+          # 空目录必须保留，否则 daemon 起来就退
+          for d in socket tmp logs; do
+            bsdtar -tf "$PKG" | grep -q "files/$d/$" && echo "PASS files/$d 存在" || { echo "FAIL files/$d 缺失"; fail=1; }
+          done
+
+          # sdk 原生模块必须在，否则主进程起不来
+          [ "$(bsdtar -tf "$PKG" | grep -c 'node_modules/sdk/')" -ge 5 ] && echo "PASS sdk 模块完整" || { echo "FAIL sdk 模块缺失"; fail=1; }
+
+          exit $fail
+
+      - name: 生成 pacman 数据库
+        if: steps.ver.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          PKG=$(ls -1 ./*.pkg.tar.zst | head -1)
+          mkdir -p docs/x86_64
+          cp "$PKG" docs/x86_64/
+          cd docs/x86_64
+          repo-add yunshu.db.tar.gz "$PKG"
+          # repo-add 会把 yunshu.db 做成指向 .tar.gz 的软链，
+          # 但 GitHub Release 不接受软链附件，这里换成实体副本。
+          # pacman 优先请求不带后缀的 yunshu.db，两者都要有。
+          cp --remove-destination yunshu.db.tar.gz yunshu.db
+          cp --remove-destination yunshu.files.tar.gz yunshu.files
+          ls -lh ./yunshu.db* ./yunshu.files*
+          rm -f "$PKG"   # 包走 Release，不进 git
+
+      - name: 提交数据库到 gh-pages
+        if: steps.ver.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          V="${{ steps.ver.outputs.version }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # 如果 PKGBUILD 被这个 job 改过，一并提交
+          git add PKGBUILD docs/x86_64/yunshu.db* docs/x86_64/yunshu.files* docs/index.html 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -m "upgpkg: yunshu ${V}-1 (auto)"
+            git push
+          else
+            echo "无变更需提交"
+          fi
+
+      - name: 发布 Release（上传包与数据库）
+        if: steps.ver.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          V: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          PKG=$(ls -1 ./*.pkg.tar.zst | head -1)
+          TAG="v${V}"
+
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "yunshu ${V}-1" \
+            --notes "云枢 ${V} 的 Arch Linux 包。
+
+安装方式见 https://${{ github.repository_owner }}.github.io/$(basename "${{ github.repository }}")/
+
+**本包不含 DLP、截图审计与厂商自更新器。**" \
+            "$PKG" \
+            docs/x86_64/yunshu.db \
+            docs/x86_64/yunshu.db.tar.gz \
+            docs/x86_64/yunshu.files \
+            docs/x86_64/yunshu.files.tar.gz
+          || echo "::warning::Release 创建失败，可能已存在同 tag"
+
+      - name: 无新版时输出
+        if: steps.ver.outputs.changed == 'false'
+        run: echo "已是最新 ${{ steps.ver.outputs.version }}，无需发布"

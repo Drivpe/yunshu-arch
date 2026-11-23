@@ -1,0 +1,133 @@
+# 交互式辅助：在 pacman 安装脚本里安全地向用户提问。
+#
+# 实测结论（用探针包在 CachyOS 上验证）：
+#   - pacman 会重定向脚本的 stdin/stderr，因此 `[ -t 0 ]` 恒为假，
+#     直接 `read` 读不到用户输入
+#   - 但若安装是在终端里发起（paru/yay/pacman -U），`/dev/tty` 可读
+#   - 若不是终端发起（CI、脚本、--noconfirm），`/dev/tty` 打不开，必须直接跳过
+#
+# 因此所有提问都必须写 `< /dev/tty`，且失败时退回「不自动操作」，
+# 绝不能让安装因此中断。
+
+_yunshu_tty_available() {
+  ( : < /dev/tty ) 2>/dev/null
+}
+
+# 询问是否启用服务。返回 0 表示用户同意。
+# 非交互环境下返回 1（即不自动启用，把决定权留给用户）。
+_yunshu_ask_enable() {
+  _yunshu_tty_available || return 1
+
+  printf '\n>>> 是否现在启用云枢后台服务（yunshu-daemon）？[Y/n] ' > /dev/tty
+  _ans=''
+  read -r _ans < /dev/tty || return 1
+
+  case "$_ans" in
+    ''|y|Y|yes|YES) return 0 ;;
+    *)              return 1 ;;
+  esac
+}
+
+post_install() {
+  printf '\n'
+
+  if _yunshu_ask_enable; then
+    if systemctl enable --now yunshu-daemon 2>/dev/null; then
+      printf '>>> 已启用并启动 yunshu-daemon。\n' > /dev/tty
+      _yunshu_enabled=1
+    else
+      printf '>>> 启用失败，请手动执行：sudo systemctl enable --now yunshu-daemon\n' > /dev/tty
+      _yunshu_enabled=0
+    fi
+  else
+    _yunshu_enabled=0
+    if _yunshu_tty_available; then
+      printf '>>> 已跳过。稍后可手动启用：sudo systemctl enable --now yunshu-daemon\n' > /dev/tty
+    fi
+  fi
+
+  cat <<'EOF'
+
+┌──────────────────────────────────────────────────────────────┐
+│  云枢 (YunShu) 已安装                                        │
+└──────────────────────────────────────────────────────────────┘
+
+EOF
+
+  if [ "${_yunshu_enabled:-0}" != "1" ]; then
+    printf '启用后台服务（当前未启用）：\n\n    sudo systemctl enable --now yunshu-daemon\n\n'
+  fi
+
+  cat <<'EOF'
+启动图形界面：
+
+    yunshu
+
+或从应用菜单搜索「云枢 / YunShu」。
+
+注意：首次登录需要填写「企业标识」，请向你的企业 IT 管理员索取。
+
+EOF
+}
+
+post_upgrade() {
+  # 升级时不重复提问，只提示
+  cat <<'EOF'
+
+┌──────────────────────────────────────────────────────────────┐
+│  云枢 (YunShu) 已升级                                        │
+└──────────────────────────────────────────────────────────────┘
+
+若服务此前已启用，升级后会自动重启；否则请手动启用：
+
+    sudo systemctl enable --now yunshu-daemon
+
+EOF
+}
+
+post_remove() {
+  # 清理运行时产物。这些文件不在包文件清单内（pacman 不会删），
+  # 且其中的 config.db 含有效登录凭证（JWT / corp_code / 设备序列号）。
+  rm -f  /opt/apps/yunshu/files/config/config.db        2>/dev/null || true
+  rm -rf /opt/apps/yunshu/files/config/[0-9a-f]*/       2>/dev/null || true
+  rm -rf /opt/apps/yunshu/files/tmp/*                   2>/dev/null || true
+  rm -rf /opt/apps/yunshu/files/socket/*                2>/dev/null || true
+  rm -rf /opt/apps/yunshu/files/logs/*                  2>/dev/null || true
+
+  # 移除用户级自启动死链（原厂安装会写入，指向 /opt 下的 desktop 文件）
+  getent passwd | awk -F: '$3>=1000 && $3<65534 {print $6}' | while read -r _home; do
+    [ -e "$_home/.config/autostart/yunshu.desktop" ] && rm -f "$_home/.config/autostart/yunshu.desktop"
+  done
+
+  # 移除残留的空目录。
+  # 因为包内用 emptydirs 保留了 socket/tmp/logs 等空目录，
+  # pacman 卸载时只删文件、不会删这些显式声明的目录，
+  # 会把 /opt/apps/yunshu 留成一个空壳。
+  find /opt/apps/yunshu -depth -type d -empty -delete 2>/dev/null || true
+  rmdir /opt/apps/yunshu /opt/apps 2>/dev/null || true
+
+  systemctl daemon-reload 2>/dev/null || true
+
+  cat <<'EOF'
+
+┌──────────────────────────────────────────────────────────────┐
+│  云枢 (YunShu) 已卸载                                        │
+└──────────────────────────────────────────────────────────────┘
+
+以下内容已清理：
+  - 程序文件与系统集成项
+  - /opt/apps/yunshu 下含登录凭证的 config.db 与策略缓存
+  - 用户级自启动项
+
+以下内容保留（遵循 Arch「包不碰家目录」惯例）：
+
+    ~/.config/YunshuCross/
+
+  ⚠️ 该目录含 Cookies 与登录态。若要连同凭证彻底清除：
+
+      rm -rf ~/.config/YunshuCross
+
+若图形界面进程仍在运行，注销并重新登录可确保其退出。
+
+EOF
+}
