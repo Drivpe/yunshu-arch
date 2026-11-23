@@ -33,7 +33,9 @@ jobs:
       - name: 安装依赖
         run: |
           pacman -Syu --noconfirm --needed base-devel git libarchive jq github-cli
-          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+          git config --global --add safe.directory '*'
+          git config --global user.name  "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: 确定版本
         id: ver
@@ -143,22 +145,24 @@ jobs:
           ls -lh ./yunshu.db* ./yunshu.files*
           rm -f "$PKG"   # 包走 Release，不进 git
 
-      - name: 提交数据库到 gh-pages
+      - name: 提交数据库到仓库
         if: steps.ver.outputs.changed == 'true'
         run: |
           set -euo pipefail
-          V="${{ steps.ver.outputs.version }}"
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cd "${GITHUB_WORKSPACE}"
 
-          # 如果 PKGBUILD 被这个 job 改过，一并提交
-          git add PKGBUILD docs/x86_64/yunshu.db* docs/x86_64/yunshu.files* docs/index.html 2>/dev/null || true
-          if ! git diff --cached --quiet; then
-            git commit -m "upgpkg: yunshu ${V}-1 (auto)"
-            git push
-          else
+          V="${{ steps.ver.outputs.version }}"
+          git add PKGBUILD docs/x86_64/yunshu.db docs/x86_64/yunshu.db.tar.gz \
+                  docs/x86_64/yunshu.files docs/x86_64/yunshu.files.tar.gz 2>/dev/null || true
+
+          if git diff --cached --quiet; then
             echo "无变更需提交"
+            exit 0
           fi
+
+          git commit -m "upgpkg: yunshu ${V}-1 (auto)"
+          # GitHub Actions 的 checkout 是 detached HEAD，需显式推到 main
+          git push origin HEAD:main
 
       - name: 发布 Release（上传包与数据库）
         if: steps.ver.outputs.changed == 'true'
