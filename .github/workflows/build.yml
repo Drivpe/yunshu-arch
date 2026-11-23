@@ -28,20 +28,17 @@ jobs:
       image: archlinux:latest
       options: --privileged
     steps:
+      - uses: actions/checkout@v4
+
       - name: 安装依赖
         run: |
-          pacman -Syu --noconfirm --needed base-devel git bsdtar jq openssh
-
-      - name: 检出代码
-        run: |
-          pacman -S --noconfirm --needed git
+          pacman -Syu --noconfirm --needed base-devel git bsdtar jq github-cli
           git config --global --add safe.directory "${GITHUB_WORKSPACE}"
-
-      - uses: actions/checkout@v4
 
       - name: 确定版本
         id: ver
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PUBLIC_TOKEN: ${{ vars.YUNSHU_PUBLIC_TOKEN || 'LtupUtmVFiEJ' }}
           FORCED: ${{ inputs.version }}
         run: |
@@ -59,9 +56,20 @@ jobs:
           CUR=$(grep -oP '^pkgver=\K.*' PKGBUILD)
           echo "version=$V"   >> "$GITHUB_OUTPUT"
           echo "current=$CUR" >> "$GITHUB_OUTPUT"
-          if [ "$CUR" = "$V" ]; then echo "changed=false" >> "$GITHUB_OUTPUT"
-          else echo "changed=true"; echo "changed=true" >> "$GITHUB_OUTPUT"; fi
-          echo "当前 $CUR / 上游 $V"
+
+          if [ "$CUR" = "$V" ]; then
+            # 版本没变，但若 Release 还没有该 tag，仍需构建并发版
+            if gh release view "v${V}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "版本未变且 Release 已存在，跳过"
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "版本未变但 Release 不存在，执行首次发版"
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "发现新版：$CUR -> $V"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: 同步 PKGBUILD 到新版本
         if: steps.ver.outputs.changed == 'true'
@@ -157,25 +165,39 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           V: ${{ steps.ver.outputs.version }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
           PKG=$(ls -1 ./*.pkg.tar.zst | head -1)
           TAG="v${V}"
+          PAGES="https://${OWNER}.github.io/${REPO#*/}/"
 
-          gh release create "$TAG" \
-            --repo "${{ github.repository }}" \
-            --title "yunshu ${V}-1" \
-            --notes "云枢 ${V} 的 Arch Linux 包。
+          NOTES=$(printf '%s\n' \
+            "云枢 ${V} 的 Arch Linux 包。" \
+            "" \
+            "安装方式：${PAGES}" \
+            "" \
+            "**本包不含 DLP、截图审计与厂商自更新器。**")
 
-安装方式见 https://${{ github.repository_owner }}.github.io/$(basename "${{ github.repository }}")/
-
-**本包不含 DLP、截图审计与厂商自更新器。**" \
-            "$PKG" \
-            docs/x86_64/yunshu.db \
-            docs/x86_64/yunshu.db.tar.gz \
-            docs/x86_64/yunshu.files \
-            docs/x86_64/yunshu.files.tar.gz
-          || echo "::warning::Release 创建失败，可能已存在同 tag"
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，改用上传附件"
+            gh release upload "$TAG" --repo "$REPO" --clobber \
+              "$PKG" \
+              docs/x86_64/yunshu.db \
+              docs/x86_64/yunshu.db.tar.gz \
+              docs/x86_64/yunshu.files \
+              docs/x86_64/yunshu.files.tar.gz
+          else
+            gh release create "$TAG" --repo "$REPO" \
+              --title "yunshu ${V}-1" \
+              --notes "$NOTES" \
+              "$PKG" \
+              docs/x86_64/yunshu.db \
+              docs/x86_64/yunshu.db.tar.gz \
+              docs/x86_64/yunshu.files \
+              docs/x86_64/yunshu.files.tar.gz
+          fi
 
       - name: 无新版时输出
         if: steps.ver.outputs.changed == 'false'
