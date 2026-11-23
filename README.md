@@ -29,9 +29,14 @@ Arch Linux / CachyOS / Manjaro 上的[云枢（YunShu）](https://www.eaglecloud
 
 ```ini
 [yunshu]
+Server = https://ghfast.top/https://github.com/Drivpe/yunshu-arch/releases/latest/download
 Server = https://github.com/Drivpe/yunshu-arch/releases/latest/download
 SigLevel = Optional TrustAll
 ```
+
+> 第一行是国内可用的 GitHub 加速镜像，第二行是官方源作兜底。
+> 代理失效时 pacman 会自动回落到官方地址（只是会很慢）。
+> 若你在海外或代理不可信，可只保留官方那一行。
 
 ```bash
 sudo pacman -Sy
