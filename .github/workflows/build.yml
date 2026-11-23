@@ -201,6 +201,8 @@ jobs:
             exit 0
           fi
           git commit -m "upgpkg: yunshu ${V}-1 (auto)"
+          # 可能有人/其它 job 在这期间推过提交，先 rebase 再推
+          git pull --rebase --autostash origin main || true
           git push
 
       - name: 发布 Release
