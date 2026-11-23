@@ -85,7 +85,55 @@ post_upgrade() {
 EOF
 }
 
+# 从 /etc/pacman.conf 移除 [yunshu] 仓库段。
+#
+# 这个段是用户按安装文档手动添加的（pacman 不管理），所以卸载时必须自己清掉，
+# 否则 `pacman -Rns yunshu` 之后系统里还留着一个指向已删仓库的配置。
+#
+# 安全性：
+#   - 先用 awk 精确匹配「从 ^[yunshu]$ 到下一个 ^[ 或文件尾」，不会误删其它仓库
+#   - 改前备份为 .bak-yunshu-<时间戳>
+#   - 只在段确实存在时才动文件，并做语法自检；失败则回滚
+_yunshu_remove_repo() {
+  local conf=/etc/pacman.conf
+  [ -f "$conf" ] || return 0
+  grep -q '^\[yunshu\]$' "$conf" || return 0
+
+  local stamp backup tmp
+  stamp=$(date +%Y%m%d%H%M%S)
+  backup="${conf}.bak-yunshu-${stamp}"
+  tmp="${conf}.yunshu-tmp"
+
+  cp -p "$conf" "$backup" || return 0
+
+  awk '
+    /^\[yunshu\]$/ { skip=1; next }
+    skip && /^\[/ { skip=0 }
+    !skip { print }
+  ' "$conf" > "$tmp" || { rm -f "$tmp"; return 0; }
+
+  # 收掉可能产生的多余尾随空行
+  awk 'NF { blank=0 } !NF { if (blank++) next } { print }' "$tmp" > "${tmp}.2" \
+    && mv "${tmp}.2" "$tmp"
+
+  # 语法自检：pacman-conf 能解析才替换
+  if pacman-conf --config "$tmp" >/dev/null 2>&1; then
+    mv "$tmp" "$conf"
+    printf '>>> 已从 %s 移除 [yunshu] 仓库段（备份：%s）\n' "$conf" "$backup" > /dev/tty 2>/dev/null \
+      || printf '>>> 已从 %s 移除 [yunshu] 仓库段（备份：%s）\n' "$conf" "$backup"
+  else
+    rm -f "$tmp"
+    printf '>>> 未能安全移除 [yunshu] 仓库段，请手动编辑 %s（备份在 %s）\n' "$conf" "$backup" > /dev/tty 2>/dev/null || true
+  fi
+}
+
 post_remove() {
+  _yunshu_remove_repo
+
+  # 清理 pacman 同步缓存中本仓库的数据库
+  rm -f /var/lib/pacman/sync/yunshu.db /var/lib/pacman/sync/yunshu.db.sig \
+        /var/lib/pacman/sync/yunshu.files /var/lib/pacman/sync/yunshu.files.sig 2>/dev/null
+
   # 清理运行时产物。这些文件不在包文件清单内（pacman 不会删），
   # 且其中的 config.db 含有效登录凭证（JWT / corp_code / 设备序列号）。
   rm -f  /opt/apps/yunshu/files/config/config.db        2>/dev/null || true
