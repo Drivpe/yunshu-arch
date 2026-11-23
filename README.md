@@ -87,8 +87,12 @@ yunshu
 那是 pacman 不管理的手工改动，需要一并清掉。改用仓库里的脚本一次做完：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Drivpe/yunshu-arch/main/uninstall-yunshu.sh | sudo bash
+curl -fsSL https://cdn.jsdelivr.net/gh/Drivpe/yunshu-arch@main/uninstall-yunshu.sh | sudo bash
 ```
+
+> 用 jsDelivr CDN 而不是 GitHub 直链：实测 `raw.githubusercontent.com` 在国内约 20% 概率超时，
+> jsDelivr 本地测试 13/13 成功。若 jsDelivr 也不通，备用地址：
+> `https://raw.githubusercontent.com/Drivpe/yunshu-arch/main/uninstall-yunshu.sh`
 
 它会依次：
 
@@ -101,7 +105,7 @@ curl -fsSL https://raw.githubusercontent.com/Drivpe/yunshu-arch/main/uninstall-y
 想连登录凭证一起删：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Drivpe/yunshu-arch/main/uninstall-yunshu.sh | sudo bash -s -- --purge
+curl -fsSL https://cdn.jsdelivr.net/gh/Drivpe/yunshu-arch@main/uninstall-yunshu.sh | sudo bash -s -- --purge
 ```
 
 ### 只想手动删也能做
