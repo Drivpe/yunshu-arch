@@ -166,10 +166,24 @@ jobs:
       - name: 整理文件
         run: |
           set -euo pipefail
+          echo "--- 下载到的内容 ---"
           ls -lh
+          echo "--- out/ ---"
+          ls -lh out/ || true
+
           mkdir -p docs/x86_64
-          mv yunshu.db yunshu.db.tar.gz yunshu.files yunshu.files.tar.gz docs/x86_64/
+          # download-artifact 保留上传时的目录结构，db 在 out/ 下
+          if [ -d out ]; then
+            mv out/yunshu.db out/yunshu.db.tar.gz \
+               out/yunshu.files out/yunshu.files.tar.gz docs/x86_64/
+          else
+            mv yunshu.db yunshu.db.tar.gz \
+               yunshu.files yunshu.files.tar.gz docs/x86_64/
+          fi
+
+          echo "--- docs/x86_64 ---"
           ls -lh docs/x86_64/
+          echo "--- 包 ---"
           ls -1 ./*.pkg.tar.zst
 
       - name: 提交 PKGBUILD 与数据库
