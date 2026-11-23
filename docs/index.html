@@ -51,12 +51,10 @@
 <p>在 <code>/etc/pacman.conf</code> 末尾加入：</p>
 
 <pre><code>[yunshu]
-Server = https://ghfast.top/https://github.com/Drivpe/yunshu-arch/releases/latest/download
 Server = https://github.com/Drivpe/yunshu-arch/releases/latest/download
 SigLevel = Optional TrustAll</code></pre>
 
-<p>第一行是国内加速镜像，第二行是官方源兜底；代理失效时 pacman 自动回落。
-若你在海外或不想用第三方代理，删掉第一行即可。</p>
+<p>若直连 GitHub 慢，可自行加镜像，但不建议用公共加速代理 —— 这类服务随时会掉。</p>
 
 <div class="note warn">
 <strong>关于 <code>SigLevel</code></strong><br>
@@ -102,26 +100,13 @@ makepkg -si</code></pre>
 
 <h2>卸载</h2>
 
-<p>除了卸包，还要清掉安装时写进 <code>/etc/pacman.conf</code> 的仓库段。
-用仓库里的脚本一次做完：</p>
+<pre><code>sudo pacman -Rns yunshu</code></pre>
 
-<pre><code>curl -fsSL https://cdn.jsdelivr.net/gh/Drivpe/yunshu-arch@main/uninstall-yunshu.sh | sudo bash</code></pre>
+<p><strong>就这一条。</strong>包的 <code>post_remove</code> 会自动移除
+<code>/etc/pacman.conf</code> 里的 <code>[yunshu]</code> 段（改前备份、改后语法自检、失败回滚），
+并清理同步缓存、含凭证的 <code>config.db</code> 与自启动项。</p>
 
-<p>会依次停服务、<code>pacman -Rns</code>、移除 <code>[yunshu]</code> 段（自动备份）、
-清理同步缓存与手工安装遗留。</p>
-
-<p>连登录凭证一起删：</p>
-
-<pre><code>curl -fsSL https://cdn.jsdelivr.net/gh/Drivpe/yunshu-arch@main/uninstall-yunshu.sh | sudo bash -s -- --purge</code></pre>
-
-<p>会清理程序文件、系统集成项，以及 <code>/opt/apps/yunshu</code> 下含登录凭证的
-<code>config.db</code> 与策略缓存。</p>
-
-<p>以下目录<strong>保留</strong>（遵循 Arch「包不碰家目录」惯例）：</p>
-
-<pre><code>~/.config/YunshuCross/</code></pre>
-
-<p>该目录含 Cookies 与登录态。要连同凭证彻底清除：</p>
+<p>保留 <code>~/.config/YunshuCross/</code>（含 Cookies）。要一起删：</p>
 
 <pre><code>rm -rf ~/.config/YunshuCross</code></pre>
 
