@@ -149,7 +149,14 @@ jobs:
         if: steps.ver.outputs.changed == 'true'
         run: |
           set -euo pipefail
+          echo "== 诊断 =="
+          echo "pwd=$(pwd)"
+          echo "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
+          ls -d "${GITHUB_WORKSPACE}/.git" 2>&1 || true
+          git --version
           cd "${GITHUB_WORKSPACE}"
+          echo "cd 后 pwd=$(pwd)"
+          git rev-parse --git-dir 2>&1 || echo "不是 git 仓库"
 
           V="${{ steps.ver.outputs.version }}"
           git add PKGBUILD docs/x86_64/yunshu.db docs/x86_64/yunshu.db.tar.gz \
