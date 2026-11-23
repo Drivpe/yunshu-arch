@@ -82,8 +82,16 @@ jobs:
           SHA=$(sha256sum "$DEB" | awk '{print $1}')
           echo "sha256=$SHA"
 
-          sed -i "s/^pkgver=.*/pkgver=${V}/"     PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=1/"        PKGBUILD
+          CURV=$(grep -oP '^pkgver=\K.*' PKGBUILD)
+          sed -i "s/^pkgver=.*/pkgver=${V}/" PKGBUILD
+          # 只有上游版本真的变了才重置 pkgrel；
+          # 版本没变时保留手工提升的 pkgrel（用于发布打包逻辑修正）。
+          if [ "$CURV" != "$V" ]; then
+            sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+            echo "上游版本变化，pkgrel 重置为 1"
+          else
+            echo "版本未变，保留现有 pkgrel=$(grep -oP '^pkgrel=\K.*' PKGBUILD)"
+          fi
           sed -i "s/^sha256sums=.*/sha256sums=('${SHA}')/" PKGBUILD
           echo "--- PKGBUILD 变更 ---"
           git --no-pager diff PKGBUILD 2>/dev/null || grep -E '^pkgver|^sha256' PKGBUILD
