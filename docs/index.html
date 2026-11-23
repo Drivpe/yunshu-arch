@@ -51,8 +51,12 @@
 <p>在 <code>/etc/pacman.conf</code> 末尾加入：</p>
 
 <pre><code>[yunshu]
+Server = https://ghfast.top/https://github.com/Drivpe/yunshu-arch/releases/latest/download
 Server = https://github.com/Drivpe/yunshu-arch/releases/latest/download
 SigLevel = Optional TrustAll</code></pre>
+
+<p>第一行是国内加速镜像，第二行是官方源兜底；代理失效时 pacman 自动回落。
+若你在海外或不想用第三方代理，删掉第一行即可。</p>
 
 <div class="note warn">
 <strong>关于 <code>SigLevel</code></strong><br>
