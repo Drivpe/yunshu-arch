@@ -3,7 +3,7 @@
 
 pkgname=yunshu
 pkgver=2.3.10.30
-pkgrel=2
+pkgrel=1
 pkgdesc="Enterprise zero-trust (SASE) client by EagleCloud (proprietary)"
 arch=('x86_64')
 url="https://www.eaglecloud.com"
