@@ -83,9 +83,36 @@ yunshu
 
 ## 卸载
 
+卸载不止一条 `pacman -Rns` —— 安装时还往 `/etc/pacman.conf` 加过仓库段，
+那是 pacman 不管理的手工改动，需要一并清掉。改用仓库里的脚本一次做完：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Drivpe/yunshu-arch/main/uninstall-yunshu.sh | sudo bash
+```
+
+它会依次：
+
+1. 停止并禁用 `yunshu-daemon` / `yunshu-updater`，以及各用户的 `yunshu-cross`
+2. `pacman -Rns yunshu`（触发 `post_remove`，删除含 JWT 的 `config.db` 与策略缓存）
+3. 从 `/etc/pacman.conf` 移除 `[yunshu]` 段（自动备份为 `.bak-yunshu-*`）
+4. 清理 `/etc/systemd/user/yunshu-cross.service`（早期手工安装遗留）、pacman 同步缓存
+5. 清理用户自启动项与 `/opt/apps/yunshu` 残留
+
+想连登录凭证一起删：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Drivpe/yunshu-arch/main/uninstall-yunshu.sh | sudo bash -s -- --purge
+```
+
+### 只想手动删也能做
+
 ```bash
 sudo pacman -Rns yunshu
+sudo sed -i '/^\[yunshu\]$/,/^SigLevel = Optional TrustAll$/d' /etc/pacman.conf
+sudo rm -rf /opt/apps/yunshu
 ```
+
+但手工删容易漏掉 `/etc/systemd/user/yunshu-cross.service` 和 pacman 同步缓存，建议用脚本。
 
 会清理程序文件、系统集成项，以及 `/opt/apps/yunshu` 下**含登录凭证**的 `config.db` 与策略缓存。
 
