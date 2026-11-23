@@ -22,25 +22,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # ── Job 1：在 Arch 容器里构建 ───────────────────────────────
+  # 只在容器里做「编译打包」这种必须有 Arch 环境的事。
+  # 不做 git 操作：容器内的 /__w 挂载不含 .git，git 会报 not a repository。
   build:
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
       options: --privileged
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      changed: ${{ steps.ver.outputs.changed }}
     steps:
       - uses: actions/checkout@v4
 
       - name: 安装依赖
         run: |
-          pacman -Syu --noconfirm --needed base-devel git libarchive jq github-cli
-          git config --global --add safe.directory '*'
-          git config --global user.name  "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          pacman -Syu --noconfirm --needed base-devel git libarchive jq curl
 
       - name: 确定版本
         id: ver
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PUBLIC_TOKEN: ${{ vars.YUNSHU_PUBLIC_TOKEN || 'LtupUtmVFiEJ' }}
           FORCED: ${{ inputs.version }}
         run: |
@@ -58,40 +60,33 @@ jobs:
           CUR=$(grep -oP '^pkgver=\K.*' PKGBUILD)
           echo "version=$V"   >> "$GITHUB_OUTPUT"
           echo "current=$CUR" >> "$GITHUB_OUTPUT"
-
           if [ "$CUR" = "$V" ]; then
-            # 版本没变，但若 Release 还没有该 tag，仍需构建并发版
-            if gh release view "v${V}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              echo "版本未变且 Release 已存在，跳过"
-              echo "changed=false" >> "$GITHUB_OUTPUT"
-            else
-              echo "版本未变但 Release 不存在，执行首次发版"
-              echo "changed=true" >> "$GITHUB_OUTPUT"
-            fi
+            echo "changed=true"  >> "$GITHUB_OUTPUT"   # 仍需构建产物，交给 job2 判断是否发版
           else
-            echo "发现新版：$CUR -> $V"
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "changed=true"  >> "$GITHUB_OUTPUT"
           fi
+          echo "当前 $CUR / 上游 $V"
 
-      - name: 同步 PKGBUILD 到新版本
-        if: steps.ver.outputs.changed == 'true'
+      - name: 同步 PKGBUILD 到上游版本
         env:
           V: ${{ steps.ver.outputs.version }}
         run: |
           set -euo pipefail
-          URL="https://pkg-cdn-hz0.sase.eagleyun.com/app/linux/${V}/ubuntu/x86_64/eaglecloud_yunshu_${V}_amd64.deb"
-          CODE=$(curl -sSL -o /dev/null -w '%{http_code}' --max-time 60 -I "$URL")
-          [ "$CODE" = "200" ] || { echo "::error::CDN 无该版本 ($CODE)"; exit 1; }
+          DEB="eaglecloud_yunshu_${V}_amd64.deb"
+          URL="https://pkg-cdn-hz0.sase.eagleyun.com/app/linux/${V}/ubuntu/x86_64/${DEB}"
 
-          curl -sSL --max-time 600 "$URL" -o /tmp/pkg.deb
-          SHA=$(sha256sum /tmp/pkg.deb | awk '{print $1}')
+          CODE=$(curl -sSL -o /dev/null -w '%{http_code}' --max-time 60 -I "$URL")
+          [ "$CODE" = "200" ] || { echo "::error::CDN 上无该版本 ($CODE)"; exit 1; }
+
+          curl -sSL --max-time 900 "$URL" -o "$DEB"
+          SHA=$(sha256sum "$DEB" | awk '{print $1}')
           echo "sha256=$SHA"
 
           sed -i "s/^pkgver=.*/pkgver=${V}/"     PKGBUILD
           sed -i "s/^pkgrel=.*/pkgrel=1/"        PKGBUILD
           sed -i "s/^sha256sums=.*/sha256sums=('${SHA}')/" PKGBUILD
-          # 把 deb 放到 srcdir，免得 makepkg 再下一次
-          cp /tmp/pkg.deb "eaglecloud_yunshu_${V}_amd64.deb"
+          echo "--- PKGBUILD 变更 ---"
+          git --no-pager diff PKGBUILD 2>/dev/null || grep -E '^pkgver|^sha256' PKGBUILD
 
       - name: 构建
         run: |
@@ -106,76 +101,98 @@ jobs:
           set -euo pipefail
           PKG=$(ls -1 ./*.pkg.tar.zst | head -1)
           echo "包: $PKG"
-
           fail=0
-          chk() { if [ "$2" = "0" ]; then echo "PASS $1"; else echo "FAIL $1 (实际 $2)"; fail=1; fi; }
 
-          chk "plugin 已移除"   "$(bsdtar -tf "$PKG" | grep -c 'files/plugin')"
-          chk "config.db 未打包" "$(bsdtar -tf "$PKG" | grep -c 'config.db')"
-          chk "screenshot 已移除" "$(bsdtar -tf "$PKG" | grep -ci screenshot)"
+          [ "$(bsdtar -tf "$PKG" | grep -c 'files/plugin')" = "0" ] \
+            && echo "PASS plugin 已移除" || { echo "FAIL plugin 残留"; fail=1; }
+          [ "$(bsdtar -tf "$PKG" | grep -c 'config.db')" = "0" ] \
+            && echo "PASS config.db 未打包" || { echo "FAIL 含 config.db"; fail=1; }
 
-          # 必须有可执行位，否则 systemd 报 203/EXEC
-          bsdtar -tvf "$PKG" | grep 'bin/yunshu-daemon' | grep -q '^-rwx' && echo "PASS daemon 可执行" || { echo "FAIL daemon 无可执行位"; fail=1; }
-          bsdtar -tvf "$PKG" | grep 'bin/yunshu-updater' | grep -q '^-rwx' && echo "PASS updater 可执行" || { echo "FAIL updater 无可执行位"; fail=1; }
+          bsdtar -tvf "$PKG" | grep 'bin/yunshu-daemon' | grep -q '^-rwx' \
+            && echo "PASS daemon 可执行" || { echo "FAIL daemon 无执行位"; fail=1; }
+          bsdtar -tvf "$PKG" | grep 'bin/yunshu-updater' | grep -q '^-rwx' \
+            && echo "PASS updater 可执行" || { echo "FAIL updater 无执行位"; fail=1; }
 
-          # 空目录必须保留，否则 daemon 起来就退
           for d in socket tmp logs; do
-            bsdtar -tf "$PKG" | grep -q "files/$d/$" && echo "PASS files/$d 存在" || { echo "FAIL files/$d 缺失"; fail=1; }
+            bsdtar -tf "$PKG" | grep -q "files/$d/$" \
+              && echo "PASS files/$d" || { echo "FAIL files/$d 缺失"; fail=1; }
           done
 
-          # sdk 原生模块必须在，否则主进程起不来
-          [ "$(bsdtar -tf "$PKG" | grep -c 'node_modules/sdk/')" -ge 5 ] && echo "PASS sdk 模块完整" || { echo "FAIL sdk 模块缺失"; fail=1; }
+          [ "$(bsdtar -tf "$PKG" | grep -c 'node_modules/sdk/')" -ge 5 ] \
+            && echo "PASS sdk 模块完整" || { echo "FAIL sdk 缺失"; fail=1; }
 
           exit $fail
 
       - name: 生成 pacman 数据库
-        if: steps.ver.outputs.changed == 'true'
         run: |
           set -euo pipefail
           PKG=$(ls -1 ./*.pkg.tar.zst | head -1)
-          mkdir -p docs/x86_64
-          cp "$PKG" docs/x86_64/
-          cd docs/x86_64
+          mkdir -p out
+          cp "$PKG" out/
+          cd out
           repo-add yunshu.db.tar.gz "$PKG"
-          # repo-add 会把 yunshu.db 做成指向 .tar.gz 的软链，
-          # 但 GitHub Release 不接受软链附件，这里换成实体副本。
-          # pacman 优先请求不带后缀的 yunshu.db，两者都要有。
-          cp --remove-destination yunshu.db.tar.gz yunshu.db
+          # repo-add 生成的 yunshu.db 是软链，Release 不接受软链，换成实体副本
+          cp --remove-destination yunshu.db.tar.gz   yunshu.db
           cp --remove-destination yunshu.files.tar.gz yunshu.files
-          ls -lh ./yunshu.db* ./yunshu.files*
-          rm -f "$PKG"   # 包走 Release，不进 git
+          rm -f "$PKG"          # 包单独走 artifact
+          ls -lh
 
-      - name: 提交数据库到仓库
-        if: steps.ver.outputs.changed == 'true'
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg
+          path: |
+            ./*.pkg.tar.zst
+            PKGBUILD
+            out/yunshu.db
+            out/yunshu.db.tar.gz
+            out/yunshu.files
+            out/yunshu.files.tar.gz
+          retention-days: 7
+
+  # ── Job 2：在宿主机提交与发版 ───────────────────────────────
+  # git 与 gh 操作必须在宿主机做：容器内 /__w 挂载不含 .git。
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: pkg
+
+      - name: 整理文件
         run: |
           set -euo pipefail
-          echo "== 诊断 =="
-          echo "pwd=$(pwd)"
-          echo "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
-          ls -d "${GITHUB_WORKSPACE}/.git" 2>&1 || true
-          git --version
-          cd "${GITHUB_WORKSPACE}"
-          echo "cd 后 pwd=$(pwd)"
-          git rev-parse --git-dir 2>&1 || echo "不是 git 仓库"
+          ls -lh
+          mkdir -p docs/x86_64
+          mv yunshu.db yunshu.db.tar.gz yunshu.files yunshu.files.tar.gz docs/x86_64/
+          ls -lh docs/x86_64/
+          ls -1 ./*.pkg.tar.zst
 
-          V="${{ steps.ver.outputs.version }}"
+      - name: 提交 PKGBUILD 与数据库
+        run: |
+          set -euo pipefail
+          V="${{ needs.build.outputs.version }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           git add PKGBUILD docs/x86_64/yunshu.db docs/x86_64/yunshu.db.tar.gz \
-                  docs/x86_64/yunshu.files docs/x86_64/yunshu.files.tar.gz 2>/dev/null || true
+                  docs/x86_64/yunshu.files docs/x86_64/yunshu.files.tar.gz
 
           if git diff --cached --quiet; then
             echo "无变更需提交"
             exit 0
           fi
-
           git commit -m "upgpkg: yunshu ${V}-1 (auto)"
-          # GitHub Actions 的 checkout 是 detached HEAD，需显式推到 main
-          git push origin HEAD:main
+          git push
 
-      - name: 发布 Release（上传包与数据库）
-        if: steps.ver.outputs.changed == 'true'
+      - name: 发布 Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          V: ${{ steps.ver.outputs.version }}
+          V: ${{ needs.build.outputs.version }}
           REPO: ${{ github.repository }}
           OWNER: ${{ github.repository_owner }}
         run: |
@@ -191,25 +208,16 @@ jobs:
             "" \
             "**本包不含 DLP、截图审计与厂商自更新器。**")
 
+          FILES=("$PKG"
+                 docs/x86_64/yunshu.db
+                 docs/x86_64/yunshu.db.tar.gz
+                 docs/x86_64/yunshu.files
+                 docs/x86_64/yunshu.files.tar.gz)
+
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-            echo "Release $TAG 已存在，改用上传附件"
-            gh release upload "$TAG" --repo "$REPO" --clobber \
-              "$PKG" \
-              docs/x86_64/yunshu.db \
-              docs/x86_64/yunshu.db.tar.gz \
-              docs/x86_64/yunshu.files \
-              docs/x86_64/yunshu.files.tar.gz
+            echo "Release $TAG 已存在，上传/覆盖附件"
+            gh release upload "$TAG" --repo "$REPO" --clobber "${FILES[@]}"
           else
             gh release create "$TAG" --repo "$REPO" \
-              --title "yunshu ${V}-1" \
-              --notes "$NOTES" \
-              "$PKG" \
-              docs/x86_64/yunshu.db \
-              docs/x86_64/yunshu.db.tar.gz \
-              docs/x86_64/yunshu.files \
-              docs/x86_64/yunshu.files.tar.gz
+              --title "yunshu ${V}-1" --notes "$NOTES" "${FILES[@]}"
           fi
-
-      - name: 无新版时输出
-        if: steps.ver.outputs.changed == 'false'
-        run: echo "已是最新 ${{ steps.ver.outputs.version }}，无需发布"
