@@ -105,14 +105,14 @@ makepkg -si</code></pre>
 <p>除了卸包，还要清掉安装时写进 <code>/etc/pacman.conf</code> 的仓库段。
 用仓库里的脚本一次做完：</p>
 
-<pre><code>curl -fsSL https://raw.githubusercontent.com/Drivpe/yunshu-arch/main/uninstall-yunshu.sh | sudo bash</code></pre>
+<pre><code>curl -fsSL https://cdn.jsdelivr.net/gh/Drivpe/yunshu-arch@main/uninstall-yunshu.sh | sudo bash</code></pre>
 
 <p>会依次停服务、<code>pacman -Rns</code>、移除 <code>[yunshu]</code> 段（自动备份）、
 清理同步缓存与手工安装遗留。</p>
 
 <p>连登录凭证一起删：</p>
 
-<pre><code>curl -fsSL https://raw.githubusercontent.com/Drivpe/yunshu-arch/main/uninstall-yunshu.sh | sudo bash -s -- --purge</code></pre>
+<pre><code>curl -fsSL https://cdn.jsdelivr.net/gh/Drivpe/yunshu-arch@main/uninstall-yunshu.sh | sudo bash -s -- --purge</code></pre>
 
 <p>会清理程序文件、系统集成项，以及 <code>/opt/apps/yunshu</code> 下含登录凭证的
 <code>config.db</code> 与策略缓存。</p>
