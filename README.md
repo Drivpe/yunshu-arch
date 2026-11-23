@@ -29,14 +29,13 @@ Arch Linux / CachyOS / Manjaro 上的[云枢（YunShu）](https://www.eaglecloud
 
 ```ini
 [yunshu]
-Server = https://ghfast.top/https://github.com/Drivpe/yunshu-arch/releases/latest/download
 Server = https://github.com/Drivpe/yunshu-arch/releases/latest/download
 SigLevel = Optional TrustAll
 ```
 
-> 第一行是国内可用的 GitHub 加速镜像，第二行是官方源作兜底。
-> 代理失效时 pacman 会自动回落到官方地址（只是会很慢）。
-> 若你在海外或代理不可信，可只保留官方那一行。
+> 如果你的网络直连 GitHub 很慢，可以自行在第一个 `Server` 前加一个你自己的镜像，
+> 但**不建议使用公共加速代理** —— 实测这类服务随时会挂（DNS 都无法解析）。
+> 慢总比随时不可用要好。
 
 ```bash
 sudo pacman -Sy
@@ -83,42 +82,16 @@ yunshu
 
 ## 卸载
 
-卸载不止一条 `pacman -Rns` —— 安装时还往 `/etc/pacman.conf` 加过仓库段，
-那是 pacman 不管理的手工改动，需要一并清掉。改用仓库里的脚本一次做完：
-
-```bash
-curl -fsSL https://cdn.jsdelivr.net/gh/Drivpe/yunshu-arch@main/uninstall-yunshu.sh | sudo bash
-```
-
-> 用 jsDelivr CDN 而不是 GitHub 直链：实测 `raw.githubusercontent.com` 在国内约 20% 概率超时，
-> jsDelivr 本地测试 13/13 成功。若 jsDelivr 也不通，备用地址：
-> `https://raw.githubusercontent.com/Drivpe/yunshu-arch/main/uninstall-yunshu.sh`
-
-它会依次：
-
-1. 停止并禁用 `yunshu-daemon` / `yunshu-updater`，以及各用户的 `yunshu-cross`
-2. `pacman -Rns yunshu`（触发 `post_remove`，删除含 JWT 的 `config.db` 与策略缓存）
-3. 从 `/etc/pacman.conf` 移除 `[yunshu]` 段（自动备份为 `.bak-yunshu-*`）
-4. 清理 `/etc/systemd/user/yunshu-cross.service`（早期手工安装遗留）、pacman 同步缓存
-5. 清理用户自启动项与 `/opt/apps/yunshu` 残留
-
-想连登录凭证一起删：
-
-```bash
-curl -fsSL https://cdn.jsdelivr.net/gh/Drivpe/yunshu-arch@main/uninstall-yunshu.sh | sudo bash -s -- --purge
-```
-
-### 只想手动删也能做
-
 ```bash
 sudo pacman -Rns yunshu
-sudo sed -i '/^\[yunshu\]$/,/^SigLevel = Optional TrustAll$/d' /etc/pacman.conf
-sudo rm -rf /opt/apps/yunshu
 ```
 
-但手工删容易漏掉 `/etc/systemd/user/yunshu-cross.service` 和 pacman 同步缓存，建议用脚本。
+**就这一条。** 包的 `post_remove` 会自动：
 
-会清理程序文件、系统集成项，以及 `/opt/apps/yunshu` 下**含登录凭证**的 `config.db` 与策略缓存。
+- 从 `/etc/pacman.conf` 移除 `[yunshu]` 段（改前备份为 `.bak-yunshu-<时间戳>`，改后做语法自检，失败自动回滚）
+- 删除 pacman 同步缓存里的本仓库数据库
+- 删除 `/opt/apps/yunshu` 下含登录凭证的 `config.db` 与策略缓存
+- 清理用户自启动项
 
 **保留**（遵循 Arch「包不碰家目录」惯例）：
 
@@ -126,13 +99,11 @@ sudo rm -rf /opt/apps/yunshu
 ~/.config/YunshuCross/
 ```
 
-该目录含 Cookies 与登录态。要与凭证一起彻底清除：
+该目录含 Cookies 与登录态。要一起删：
 
 ```bash
 rm -rf ~/.config/YunshuCross
 ```
-
----
 
 ## 这个仓库怎么工作
 
